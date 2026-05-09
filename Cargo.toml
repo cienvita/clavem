@@ -3,6 +3,8 @@ name = "clavem"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+description = "Local proxy for the Anthropic Claude API that records per-model token usage."
+repository = "https://github.com/cienvita/clavem"
 
 [dependencies]
 anyhow = "1"
