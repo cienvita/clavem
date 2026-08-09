@@ -3,7 +3,7 @@ name = "clavem"
 version = "0.1.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Local proxy for the Anthropic Claude API that records per-model token usage."
+description = "AI API gateway that forwards to upstream providers and records token usage."
 repository = "https://github.com/cienvita/clavem"
 
 [dependencies]
@@ -13,8 +13,11 @@ axum = "0.8"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+http = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

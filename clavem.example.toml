@@ -1,0 +1,27 @@
+# Copy to ~/.config/clavem/clavem.toml and edit.
+
+[server]
+listen = "127.0.0.1:4567"
+
+# Each [[provider]] block is one instance. `name` is the path prefix
+# clients use; the rest of the path is forwarded to base_url verbatim.
+# `kind` picks the wire dialect: anthropic, xai, azure.
+
+[[provider]]
+name = "anthropic"
+kind = "anthropic"
+base_url = "https://api.anthropic.com"
+key_file = "~/.config/clavem/anthropic.key"
+
+[[provider]]
+name = "xai"
+kind = "xai"
+base_url = "https://api.x.ai"
+key_file = "~/.config/clavem/xai.key"
+
+# Azure endpoints are per-resource, so configure one instance per resource.
+[[provider]]
+name = "azure-eu"
+kind = "azure"
+base_url = "https://my-resource.openai.azure.com"
+key_file = "~/.config/clavem/azure-eu.key"

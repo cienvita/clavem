@@ -12,7 +12,8 @@ from anthropic import Anthropic
 
 PORT = int(os.environ.get("CLAVEM_PORT", "4567"))
 MODEL = os.environ.get("CLAVEM_MODEL", "claude-haiku-4-5")
-BASE_URL = f"http://127.0.0.1:{PORT}"
+PROVIDER = os.environ.get("CLAVEM_PROVIDER", "anthropic")
+BASE_URL = f"http://127.0.0.1:{PORT}/{PROVIDER}"
 
 
 def main() -> int:
