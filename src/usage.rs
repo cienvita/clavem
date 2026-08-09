@@ -21,14 +21,19 @@ impl Tokens {
 
 #[derive(Debug, Default)]
 pub struct Totals {
+    /// Keyed by `provider/model`, so the same model served by two provider
+    /// instances stays separate.
     pub by_model: BTreeMap<String, Tokens>,
     pub grand: Tokens,
     pub requests: u64,
 }
 
 impl Totals {
-    pub fn record(&mut self, model: &str, t: &Tokens) -> Tokens {
-        self.by_model.entry(model.to_string()).or_default().add(t);
+    pub fn record(&mut self, provider: &str, model: &str, t: &Tokens) -> Tokens {
+        self.by_model
+            .entry(format!("{provider}/{model}"))
+            .or_default()
+            .add(t);
         self.grand.add(t);
         self.requests += 1;
         self.grand
@@ -41,17 +46,17 @@ impl Totals {
         }
         println!("clavem totals ({} requests):", self.requests);
         println!(
-            "  {:<32} {:>10} {:>10} {:>14} {:>12}",
-            "model", "input", "output", "cache_create", "cache_read"
+            "  {:<40} {:>10} {:>10} {:>14} {:>12}",
+            "provider/model", "input", "output", "cache_create", "cache_read"
         );
         for (model, t) in &self.by_model {
             println!(
-                "  {:<32} {:>10} {:>10} {:>14} {:>12}",
+                "  {:<40} {:>10} {:>10} {:>14} {:>12}",
                 model, t.input, t.output, t.cache_create, t.cache_read
             );
         }
         println!(
-            "  {:<32} {:>10} {:>10} {:>14} {:>12}",
+            "  {:<40} {:>10} {:>10} {:>14} {:>12}",
             "TOTAL",
             self.grand.input,
             self.grand.output,
@@ -68,7 +73,6 @@ pub struct Sniffer {
     json_buf: Vec<u8>,
     model: Option<String>,
     tokens: Tokens,
-    saw_delta: bool,
 }
 
 impl Sniffer {
@@ -80,7 +84,6 @@ impl Sniffer {
             json_buf: Vec::new(),
             model: None,
             tokens: Tokens::default(),
-            saw_delta: false,
         }
     }
 
@@ -104,9 +107,7 @@ impl Sniffer {
             let t = read_usage(u);
             return Some((model, t));
         }
-        if !self.saw_delta && self.tokens.output == 0 {
-            // Allow message_start usage as a fallback; it sets output=1.
-        }
+        // With no message_delta the message_start usage stands as-is.
         let model = self.model.take().unwrap_or_else(|| "unknown".into());
         Some((model, self.tokens))
     }
@@ -155,7 +156,6 @@ impl Sniffer {
                         self.tokens.cache_read = t.cache_read;
                     }
                     self.tokens.output = t.output;
-                    self.saw_delta = true;
                 }
             }
             _ => {}
