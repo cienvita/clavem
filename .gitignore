@@ -1,2 +1,6 @@
 /target
 /.idea
+
+# Real credentials for the live check, plus any key files generated from them.
+/tests/live-keys.yml
+*.key

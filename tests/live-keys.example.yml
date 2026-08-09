@@ -1,0 +1,19 @@
+# Credentials for tests/live_check.py. Copy to tests/live-keys.yml, which is
+# gitignored, and fill in. Omit a provider to skip its checks.
+#
+# `model` is optional and overrides the script default, which is handy when
+# an account has access to a different set of model ids.
+
+anthropic:
+  key: sk-ant-...
+  model: claude-haiku-4-5
+
+xai:
+  key: xai-...
+  model: grok-3-mini
+
+azure:
+  key: ...
+  endpoint: https://my-resource.openai.azure.com
+  api_version: 2024-10-21
+  deployment: my-deployment
