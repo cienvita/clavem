@@ -5,8 +5,7 @@ the real provider credentials, forwards the request unchanged, and records
 token usage on the way back.
 
 There is no format translation between providers: each client speaks its
-provider's native wire format, so only `base_url` changes. See
-[docs/design.md](docs/design.md) for the design and the phased plan.
+provider's native wire format, so only `base_url` changes.
 
 Early. Routing and usage accounting work. With a Postgres database, clavem
 also authenticates clients with virtual keys and short-lived tokens, prices
