@@ -8,8 +8,10 @@ There is no format translation between providers: each client speaks its
 provider's native wire format, so only `base_url` changes. See
 [docs/design.md](docs/design.md) for the design and the phased plan.
 
-Early. Routing and usage accounting work; virtual keys, pricing, budgets,
-persistence and the admin UI do not exist yet.
+Early. Routing and usage accounting work. With a Postgres database, clavem
+also authenticates clients with virtual keys and short-lived tokens, prices
+usage and enforces budgets, for the Anthropic dialect only. There is no admin
+UI yet.
 
 ## Build
 
@@ -55,16 +57,44 @@ from anthropic import Anthropic
 client = Anthropic(api_key="proxied", base_url="http://127.0.0.1:4567/anthropic")
 ```
 
-Usage is logged per request and totalled per provider and model, printed on
-graceful shutdown. Totals are in memory only and are lost on restart.
+Without a `[database]` section, usage is logged per request and totalled per
+provider and model, printed on graceful shutdown. Totals are in memory only
+and are lost on restart.
 
 Metering currently covers the Anthropic dialect. Requests to `xai` and
 `azure` are forwarded and logged but not metered, because OpenAI-shaped
 streaming only reports usage when the request asks for it and the adapter
 that handles that is not written yet.
 
-Virtual keys do not exist, so clavem does not authenticate its clients.
-Bind it to localhost, or put it behind a reverse proxy that does.
+Without a database clavem does not authenticate its clients. Bind it to
+localhost, or put it behind a reverse proxy that does.
+
+## Tenants, keys and budgets
+
+Add `[database]`, `[auth]` and `[admin]` to the config (see
+`clavem.example.toml`). Migrations run at startup. From then on every
+proxied request needs a clavem key, and usage is written to Postgres.
+
+A tenant holds virtual keys, grants to one or more upstream credentials, a
+policy (allowed paths, models, `max_tokens`) and day or month budgets in USD,
+tokens or both. Upstream credentials stay in the config file; a provider can
+have several as `[[provider.credential]]`, and grants pick between them by
+name. Tenants, keys, grants, budgets and prices are managed through the API
+on the `[admin]` listener; the endpoint list is at the top of `src/admin.rs`.
+
+```sh
+adm() { curl -s -H "Authorization: Bearer $(cat ~/.config/clavem/admin.token)" \
+  -H 'Content-Type: application/json' "http://127.0.0.1:4569$@"; }
+adm /v1/tenants -d '{"slug":"acme","name":"Acme"}'
+adm /v1/tenants/acme/grants -X PUT -d '[{"provider":"anthropic","credential":"default"}]'
+adm /v1/tenants/acme/keys -d '{"name":"ci"}'
+```
+
+The last call returns the key (`clv_...`) once. Clients send it as their
+API key, in `x-api-key` or `Authorization: Bearer`. `POST
+/_clavem/v1/token` with a key returns a `clvt_...` token valid for up to an
+hour, optionally with a narrower policy, for handing to less trusted code.
+A request over budget gets a 402.
 
 ## Tests
 

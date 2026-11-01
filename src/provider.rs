@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
 
-use crate::config::{Config, read_key_file};
+use crate::config::{Config, DEFAULT_CREDENTIAL, read_key_file};
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -17,6 +17,16 @@ pub enum Kind {
     Anthropic,
     Xai,
     Azure,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Anthropic => "anthropic",
+            Kind::Xai => "xai",
+            Kind::Azure => "azure",
+        }
+    }
 }
 
 /// Headers we never forward: the client's own credential slots (we
@@ -55,34 +65,76 @@ pub struct Provider {
     pub kind: Kind,
     /// Upstream root, no trailing slash.
     pub base_url: String,
-    /// The credential header for this kind, built once at startup.
-    auth: (HeaderName, HeaderValue),
+    /// Credential name -> header value, built once at startup. Ordered so
+    /// the open (no database) mode picks a stable first credential.
+    credentials: BTreeMap<String, HeaderValue>,
 }
 
 impl Provider {
-    /// Fails if the credential cannot be a header value, so a mangled key
-    /// file is a startup error rather than a puzzling 401 later.
+    /// A provider with one credential named `default`.
     pub fn new(
         name: impl Into<String>,
         kind: Kind,
         base_url: impl Into<String>,
         api_key: &str,
     ) -> Result<Provider> {
+        Provider::with_credentials(name, kind, base_url, [(DEFAULT_CREDENTIAL, api_key)])
+    }
+
+    /// Fails if a credential cannot be a header value, so a mangled key
+    /// file is a startup error rather than a puzzling 401 later.
+    pub fn with_credentials<'a>(
+        name: impl Into<String>,
+        kind: Kind,
+        base_url: impl Into<String>,
+        creds: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Result<Provider> {
         let name = name.into();
-        let (header, credential) = match kind {
-            Kind::Anthropic => ("x-api-key", api_key.to_string()),
-            Kind::Xai => ("authorization", format!("Bearer {api_key}")),
-            Kind::Azure => ("api-key", api_key.to_string()),
-        };
-        let mut value = HeaderValue::from_str(&credential)
-            .with_context(|| format!("provider {name:?}: api key is not a valid header value"))?;
-        value.set_sensitive(true);
+        let mut credentials = BTreeMap::new();
+        for (cred, api_key) in creds {
+            let raw = match kind {
+                Kind::Anthropic | Kind::Azure => api_key.to_string(),
+                Kind::Xai => format!("Bearer {api_key}"),
+            };
+            let mut value = HeaderValue::from_str(&raw).with_context(|| {
+                format!(
+                    "provider {name:?} credential {cred:?}: api key is not a valid header value"
+                )
+            })?;
+            value.set_sensitive(true);
+            credentials.insert(cred.to_string(), value);
+        }
+        anyhow::ensure!(!credentials.is_empty(), "provider {name:?}: no credentials");
         Ok(Provider {
             name,
             kind,
             base_url: base_url.into().trim_end_matches('/').to_string(),
-            auth: (HeaderName::from_static(header), value),
+            credentials,
         })
+    }
+
+    fn auth_header(&self) -> HeaderName {
+        HeaderName::from_static(match self.kind {
+            Kind::Anthropic => "x-api-key",
+            Kind::Xai => "authorization",
+            Kind::Azure => "api-key",
+        })
+    }
+
+    pub fn credential_names(&self) -> impl Iterator<Item = &str> {
+        self.credentials.keys().map(String::as_str)
+    }
+
+    pub fn has_credential(&self, name: &str) -> bool {
+        self.credentials.contains_key(name)
+    }
+
+    /// The credential used when no tenant grant picks one.
+    pub fn first_credential(&self) -> &str {
+        self.credentials
+            .keys()
+            .next()
+            .expect("at least one credential")
     }
 
     /// Upstream URL for a rest path (no leading slash) and optional query.
@@ -96,8 +148,9 @@ impl Provider {
     }
 
     /// Copies the client's headers, dropping the ones we must not forward,
-    /// and injects the real upstream credential.
-    pub fn upstream_headers(&self, from_client: &HeaderMap) -> HeaderMap {
+    /// and injects the named upstream credential. Panics on an unknown
+    /// credential; callers pick from [`Provider::credential_names`].
+    pub fn upstream_headers_with(&self, from_client: &HeaderMap, credential: &str) -> HeaderMap {
         let mut headers = HeaderMap::with_capacity(from_client.len() + 2);
         for (name, value) in from_client {
             if DROP_REQUEST_HEADERS.contains(&name.as_str()) {
@@ -105,7 +158,11 @@ impl Provider {
             }
             headers.append(name.clone(), value.clone());
         }
-        headers.insert(self.auth.0.clone(), self.auth.1.clone());
+        let value = self
+            .credentials
+            .get(credential)
+            .unwrap_or_else(|| panic!("provider {:?} has no credential {credential:?}", self.name));
+        headers.insert(self.auth_header(), value.clone());
         if self.kind == Kind::Anthropic && !headers.contains_key("anthropic-version") {
             headers.insert(
                 "anthropic-version",
@@ -116,6 +173,13 @@ impl Provider {
     }
 }
 
+impl Provider {
+    /// Headers for the first credential, as used in open mode.
+    pub fn upstream_headers(&self, from_client: &HeaderMap) -> HeaderMap {
+        self.upstream_headers_with(from_client, self.first_credential())
+    }
+}
+
 /// Hand-written so the credential cannot reach a log line.
 impl std::fmt::Debug for Provider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -123,6 +187,7 @@ impl std::fmt::Debug for Provider {
             .field("name", &self.name)
             .field("kind", &self.kind)
             .field("base_url", &self.base_url)
+            .field("credentials", &self.credentials.keys().collect::<Vec<_>>())
             .finish_non_exhaustive()
     }
 }
@@ -152,16 +217,29 @@ impl Registry {
     pub fn from_config(config: &Config) -> Result<Registry> {
         let mut providers = Vec::with_capacity(config.providers.len());
         for p in &config.providers {
-            let api_key = read_key_file(&p.key_file).with_context(|| {
-                format!(
-                    "provider {:?}: reading key from {}",
-                    p.name,
-                    p.key_file.display()
-                )
-            })?;
-            providers.push(Provider::new(&p.name, p.kind, &p.base_url, &api_key)?);
+            let mut keys = Vec::new();
+            for (cred, path) in p.all_credentials() {
+                let key = read_key_file(&path).with_context(|| {
+                    format!(
+                        "provider {:?} credential {cred:?}: reading key from {}",
+                        p.name,
+                        path.display()
+                    )
+                })?;
+                keys.push((cred, key));
+            }
+            providers.push(Provider::with_credentials(
+                &p.name,
+                p.kind,
+                &p.base_url,
+                keys.iter().map(|(c, k)| (c.as_str(), k.as_str())),
+            )?);
         }
         Ok(Registry::new(providers))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Arc<Provider>> {
+        self.by_name.get(name)
     }
 
     pub fn providers(&self) -> impl Iterator<Item = &Arc<Provider>> {

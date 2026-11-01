@@ -53,6 +53,24 @@ async fn sse() -> Response {
         .unwrap()
 }
 
+/// Sends message_start, then holds the stream open, as a long generation
+/// would. Used to check that a client hanging up is still metered.
+async fn slow_sse() -> Response {
+    let start = concat!(
+        "event: message_start\n",
+        r#"data: {"type":"message_start","message":{"model":"claude-haiku-5-5","usage":{"input_tokens":70,"output_tokens":1}}}"#,
+        "\n\n",
+    );
+    let body = async_stream::stream! {
+        yield Ok::<_, std::convert::Infallible>(bytes::Bytes::from(start));
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+    };
+    Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(axum::body::Body::from_stream(body))
+        .unwrap()
+}
+
 async fn serve(router: axum::Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -75,6 +93,7 @@ impl Harness {
         let upstream = serve(
             axum::Router::new()
                 .route("/sse", get(sse))
+                .route("/slow-sse", get(slow_sse))
                 .fallback(any(echo)),
         )
         .await;
@@ -198,4 +217,32 @@ async fn openai_shaped_kinds_are_not_metered_yet() {
     let h = Harness::start().await;
     h.post("/xai/v1/chat/completions", "{}").await;
     assert!(h.totals().is_empty());
+}
+
+#[tokio::test]
+async fn client_disconnect_mid_stream_is_still_metered() {
+    let h = Harness::start().await;
+    let mut resp = h
+        .client
+        .get(format!("{}/anthropic/slow-sse", h.base))
+        .send()
+        .await
+        .unwrap();
+    let first = resp.chunk().await.unwrap().unwrap();
+    assert!(
+        std::str::from_utf8(&first)
+            .unwrap()
+            .contains("message_start")
+    );
+    // Hang up while upstream is still generating.
+    drop(resp);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.totals().is_empty() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        h.totals(),
+        vec![("anthropic/claude-haiku-5-5".to_string(), 70, 1)]
+    );
 }

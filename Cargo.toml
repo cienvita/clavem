@@ -10,14 +10,26 @@ repository = "https://github.com/cienvita/clavem"
 anyhow = "1"
 async-stream = "0.3"
 axum = "0.8"
+base64 = "0.22"
 bytes = "1"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
+crc32fast = "1"
+deadpool-postgres = "0.14.2"
 futures-util = "0.3"
+getrandom = "0.3"
+hmac = "0.12"
 http = "1"
+refinery = { version = "0.10", features = ["tokio-postgres"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+rust_decimal = { version = "1.43.0", features = ["db-tokio-postgres", "serde-with-str"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+sha2 = "0.10"
+subtle = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-postgres = { version = "0.7.18", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.29.0", features = ["v7", "serde"] }
